@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  username     String   @unique
+  age          Int?
+  city         String?
+  dietary      String?
+  bio          String?
+  avatarSeed   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  createdDinners        Dinner[]         @relation("DinnerCreator")
+  dinnerAttendees       DinnerAttendee[]
+  messages              Message[]
+  reviewsGiven          Review[]         @relation("ReviewsGiven")
+  reviewsReceived       Review[]         @relation("ReviewsReceived")
+  notificationsReceived Notification[]   @relation("NotificationsReceived")
+  notificationsActed    Notification[]   @relation("NotificationsActor")
+}
+
+model Dinner {
+  id             String   @id @default(cuid())
+  creatorId      String
+  restaurantName String
+  address        String
+  city           String
+  cuisine        String
+  dietary        String
+  budget         String
+  maxGuests      Int
+  startsAt       DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  creator       User             @relation("DinnerCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  attendees     DinnerAttendee[]
+  messages      Message[]
+  reviews       Review[]
+  notifications Notification[]
+
+  @@index([creatorId])
+  @@index([startsAt])
+}
+
+model DinnerAttendee {
+  dinnerId String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  dinner Dinner @relation(fields: [dinnerId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([dinnerId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  dinnerId  String
+  userId    String
+  text      String
+  readByIds String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dinner Dinner @relation(fields: [dinnerId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([dinnerId, createdAt])
+  @@index([userId])
+}
+
+model Review {
+  id             String   @id @default(cuid())
+  rating         Int
+  comment        String
+  revieweeId     String
+  reviewerId     String
+  dinnerId       String
+  dinnerName     String
+  isHostReview   Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  reviewee User   @relation("ReviewsReceived", fields: [revieweeId], references: [id], onDelete: Cascade)
+  reviewer User   @relation("ReviewsGiven", fields: [reviewerId], references: [id], onDelete: Cascade)
+  dinner   Dinner @relation(fields: [dinnerId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewerId, revieweeId, dinnerId])
+  @@index([revieweeId])
+  @@index([reviewerId])
+  @@index([dinnerId])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  type        String
+  dinnerId    String
+  dinnerName  String
+  actorId     String
+  actorName   String
+  recipientId String
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  dinner    Dinner @relation(fields: [dinnerId], references: [id], onDelete: Cascade)
+  actor     User   @relation("NotificationsActor", fields: [actorId], references: [id], onDelete: Cascade)
+  recipient User   @relation("NotificationsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, createdAt])
+  @@index([dinnerId])
+}
