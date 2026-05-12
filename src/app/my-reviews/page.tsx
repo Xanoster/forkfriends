@@ -25,7 +25,7 @@ export default function MyReviewsPage() {
     try {
         const userReviews = await fetchUserReviews(uid);
         // Sort reviews by date to show newest first within groups
-        userReviews.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+        userReviews.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         setReviews(userReviews);
     } catch(e) {
         console.error("Could not load reviews", e);

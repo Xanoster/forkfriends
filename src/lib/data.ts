@@ -1,5 +1,5 @@
 export interface Dinner {
-    id: string; // Changed to string for Firestore document IDs
+    id: string;
     creatorId: string;
     creatorName: string;
     creatorUsername: string;
@@ -19,7 +19,7 @@ export interface Dinner {
     reviews?: Record<string, string[]>; // Who has reviewed whom for this dinner. { reviewerId: [revieweeId1, revieweeId2] }
     date: string;
     time: string;
-    createdAt?: any; // To use with serverTimestamp
+    createdAt?: string;
 }
 
 export interface Comment {
@@ -28,7 +28,7 @@ export interface Comment {
     userId: string;
     userName:string;
     userImage: string;
-    createdAt: any;
+    createdAt: string;
     readBy: string[];
 }
 
@@ -38,13 +38,14 @@ export interface Review {
     comment: string;
     revieweeId: string; // The user ID of the person being reviewed
     revieweeName: string;
+    revieweeUsername?: string;
     reviewerId: string; // The user ID of the person leaving the review
     reviewerName: string;
     reviewerImage: string;
     dinnerId: string;
     dinnerName: string;
     isHostReview: boolean; // Was the reviewee the host of this dinner?
-    createdAt: any;
+    createdAt: string;
 }
 
 export interface Notification {
@@ -56,7 +57,7 @@ export interface Notification {
   actorName: string;
   recipientId: string; // User who should receive the notification (e.g., the host)
   read: boolean;
-  createdAt: any;
+  createdAt: string;
 }
 
 

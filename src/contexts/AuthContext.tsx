@@ -1,14 +1,10 @@
-
 'use client';
 
-import React, { createContext, useState, useContext, ReactNode, useEffect, useCallback } from 'react';
+import React, { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { User as FirebaseUser, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, deleteUser } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, deleteDoc as deleteFirestoreDoc } from "firebase/firestore"; 
+import { SessionProvider, signIn, signOut, useSession } from 'next-auth/react';
 import { useToast } from '@/hooks/use-toast';
 import { Review } from '@/lib/data';
-
 
 export interface User {
   uid: string;
@@ -37,183 +33,156 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider = ({ children }: { children: ReactNode }) => {
+const parseJson = async <T,>(response: Response): Promise<T> => {
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error((data as { error?: string }).error || 'Request failed.');
+  }
+  return data as T;
+};
+
+const AuthStateProvider = ({ children }: { children: ReactNode }) => {
+  const { status } = useSession();
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(true);
   const router = useRouter();
   const { toast } = useToast();
 
-  const fetchUserProfile = useCallback(async (uid: string): Promise<User | null> => {
+  const refreshCurrentUser = useCallback(async () => {
+    if (status !== 'authenticated') {
+      setUser(null);
+      setProfileLoading(status === 'loading');
+      return null;
+    }
+
+    setProfileLoading(true);
     try {
-      const userDocRef = doc(db, "users", uid);
-      const userDoc = await getDoc(userDocRef);
-      const firebaseUser = auth.currentUser;
-      if (userDoc.exists()) {
-        return { uid, email: userDoc.data().email || firebaseUser?.email || null, ...userDoc.data() } as User;
-      } else if (firebaseUser) {
-         const defaultUsername = firebaseUser.email?.split('@')[0].replace(/[^a-zA-Z0-9]/g, '') || 'newuser';
-         const newUserProfile = {
-           name: firebaseUser.displayName || "New User",
-           username: defaultUsername,
-           email: firebaseUser.email,
-           avatarSeed: firebaseUser.email,
-         };
-         await setDoc(userDocRef, newUserProfile);
-         return { uid, ...newUserProfile } as User;
-      }
-      return null;
+      const data = await parseJson<{ user: User }>(await fetch('/api/me'));
+      setUser(data.user);
+      return data.user;
     } catch (error) {
-      console.error("Could not fetch user profile:", error);
-      const firebaseUser = auth.currentUser;
-      if (firebaseUser) {
-          return { uid: firebaseUser.uid, email: firebaseUser.email };
-      }
+      console.error('Could not load current user:', error);
+      setUser(null);
       return null;
+    } finally {
+      setProfileLoading(false);
     }
-}, []);
-
-  const fetchPublicProfile = useCallback(async (username: string): Promise<User | null> => {
-    const usersRef = collection(db, "users");
-    const q = query(usersRef, where("username", "==", username));
-    const querySnapshot = await getDocs(q);
-
-    if (querySnapshot.empty) {
-        console.log("No user found with that username.");
-        return null;
-    }
-
-    const userDoc = querySnapshot.docs[0];
-    return { uid: userDoc.id, ...userDoc.data() } as User;
-  }, []);
-
-  const fetchUserReviews = useCallback(async (uid: string): Promise<Review[]> => {
-    const reviewsRef = collection(db, "reviews");
-    const q = query(reviewsRef, where("revieweeId", "==", uid));
-    const querySnapshot = await getDocs(q);
-    
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Review));
-  }, []);
-
+  }, [status]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setLoading(true);
-      if (firebaseUser) {
-        const userProfile = await fetchUserProfile(firebaseUser.uid);
-        setUser(userProfile);
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [fetchUserProfile]);
+    refreshCurrentUser();
+  }, [refreshCurrentUser]);
 
   const login = async (email: string, pass: string) => {
-    try {
-      await signInWithEmailAndPassword(auth, email, pass);
-      if (window.location.pathname.startsWith('/signin')) {
-        router.push('/');
-      }
-    } catch (error: any) {
-      console.error("Login error:", error);
+    const result = await signIn('credentials', {
+      email,
+      password: pass,
+      redirect: false,
+    });
+
+    if (result?.error) {
       toast({
         title: 'Sign In Failed',
         description: 'Incorrect email or password. Please try again.',
         variant: 'destructive',
       });
-      throw error;
+      throw new Error(result.error);
+    }
+
+    await refreshCurrentUser();
+    if (window.location.pathname.startsWith('/signin')) {
+      router.push('/');
+      router.refresh();
     }
   };
 
   const signup = async (name: string, email: string, pass: string) => {
-    try {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
-        const firebaseUser = userCredential.user;
+    await parseJson<{ user: User }>(
+      await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password: pass }),
+      })
+    );
 
-        const defaultUsername = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '') || 'newuser';
-        const newUser: Partial<User> = {
-            name: name,
-            username: defaultUsername,
-            email: email,
-            avatarSeed: email,
-        };
-        
-        await setDoc(doc(db, "users", firebaseUser.uid), newUser);
-        
-        router.push('/');
-    } catch (error: any) {
-        console.error("Signup error:", error);
-        throw new Error(error.message || 'An unknown error occurred during sign up.');
-    }
-  }
+    await login(email, pass);
+  };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
-      router.push('/signin');
-    } catch (error: any) {
-       toast({
-        title: 'Sign Out Failed',
-        description: error.message,
-        variant: 'destructive',
-      });
-    }
+    await signOut({ redirect: false });
+    setUser(null);
+    router.push('/signin');
+    router.refresh();
   };
 
   const updateUser = async (updatedFields: Partial<User>) => {
-    if (user) {
-        const userDocRef = doc(db, "users", user.uid);
-        try {
-            await updateDoc(userDocRef, updatedFields);
-            const updatedProfile = await fetchUserProfile(user.uid);
-            setUser(updatedProfile);
-        } catch (error) {
-            console.error("Error updating user profile:", error);
-            toast({
-                title: "Update Failed",
-                description: "Could not save your profile changes.",
-                variant: "destructive"
-            });
-            throw error;
-        }
-    }
+    const { uid: _uid, email: _email, ...profileUpdates } = updatedFields;
+    const data = await parseJson<{ user: User }>(
+      await fetch('/api/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profileUpdates),
+      })
+    );
+    setUser(data.user);
   };
 
-  const deleteAccount = async () => {
-    const firebaseUser = auth.currentUser;
-    if (firebaseUser) {
-        try {
-            // Delete user's Firestore document first
-            const userDocRef = doc(db, "users", firebaseUser.uid);
-            await deleteFirestoreDoc(userDocRef);
-
-            // Then delete the user from Firebase Auth
-            await deleteUser(firebaseUser);
-            
-            setUser(null); // Clear user state
-            // The onAuthStateChanged listener will handle redirecting
-        } catch (error: any) {
-            console.error("Error deleting account:", error);
-            // This error can happen if the user needs to re-authenticate.
-            if (error.code === 'auth/requires-recent-login') {
-                throw new Error("This is a sensitive operation. Please log out and log back in before deleting your account.");
-            }
-            throw new Error(error.message || "An unknown error occurred while deleting the account.");
-        }
-    } else {
-        throw new Error("No user is currently signed in.");
+  const fetchUserProfile = useCallback(async (_uid: string): Promise<User | null> => {
+    try {
+      const data = await parseJson<{ user: User }>(await fetch('/api/me'));
+      return data.user;
+    } catch {
+      return null;
     }
-  }
+  }, []);
 
+  const fetchPublicProfile = useCallback(async (username: string): Promise<User | null> => {
+    try {
+      const data = await parseJson<{ user: User }>(await fetch(`/api/users/${encodeURIComponent(username)}`));
+      return data.user;
+    } catch {
+      return null;
+    }
+  }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, login, signup, logout, updateUser, fetchUserProfile, fetchPublicProfile, fetchUserReviews, deleteAccount, loading }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const fetchUserReviews = useCallback(async (uid: string): Promise<Review[]> => {
+    const data = await parseJson<{ reviews: Review[] }>(
+      await fetch(`/api/reviews?revieweeId=${encodeURIComponent(uid)}`)
+    );
+    return data.reviews;
+  }, []);
+
+  const deleteAccount = async () => {
+    await parseJson<{ ok: true }>(
+      await fetch('/api/me', {
+        method: 'DELETE',
+      })
+    );
+    await signOut({ redirect: false });
+    setUser(null);
+  };
+
+  const value = {
+    user,
+    login,
+    signup,
+    logout,
+    updateUser,
+    fetchUserProfile,
+    fetchPublicProfile,
+    fetchUserReviews,
+    deleteAccount,
+    loading: status === 'loading' || profileLoading,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
+
+export const AuthProvider = ({ children }: { children: ReactNode }) => (
+  <SessionProvider>
+    <AuthStateProvider>{children}</AuthStateProvider>
+  </SessionProvider>
+);
 
 export const useAuth = () => {
   const context = useContext(AuthContext);

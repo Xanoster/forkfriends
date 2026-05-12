@@ -71,7 +71,7 @@ export default function PublicProfilePage() {
             if (userProfile) {
                 setProfile(userProfile);
                 const userReviews = await fetchUserReviews(userProfile.uid);
-                 userReviews.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+                 userReviews.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
                 setReviews(userReviews);
             } else {
                 toast({ title: "User not found", description: "This profile could not be found.", variant: 'destructive'});

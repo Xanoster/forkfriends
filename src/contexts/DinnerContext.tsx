@@ -1,13 +1,9 @@
-
 'use client';
 
 import React, { createContext, useState, useContext, ReactNode, useEffect, Dispatch, SetStateAction, useCallback } from 'react';
 import { Dinner, Comment, Review, Notification } from '@/lib/data';
-import { db } from '@/lib/firebase';
-import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, serverTimestamp, getDocs, query, where, arrayUnion, arrayRemove, getDoc, writeBatch, orderBy } from "firebase/firestore";
 import { useAuth } from './AuthContext';
 import { useToast } from '@/hooks/use-toast';
-
 
 interface DinnerContextType {
   dinners: Dinner[];
@@ -19,7 +15,7 @@ interface DinnerContextType {
   cancelBooking: (dinnerId: string, userId:string) => Promise<void>;
   getComments: (dinnerId: string, callback: (comments: Comment[]) => void) => () => void;
   addComment: (dinnerId: string, text: string) => Promise<void>;
-  deleteComment: (dinnerId: string, commentId: string, isHost: boolean) => Promise<void>;
+  deleteComment: (dinnerId: string, commentId: string, isHost: boolean, isSelfDelete?: boolean) => Promise<void>;
   markCommentsAsRead: (dinnerId: string, comments: Comment[]) => Promise<void>;
   hasUnreadMessages: (dinnerId: string, comments: Comment[]) => boolean;
   unreadDinnerIds: string[];
@@ -36,468 +32,271 @@ interface DinnerContextType {
 
 const DinnerContext = createContext<DinnerContextType | undefined>(undefined);
 
+const parseJson = async <T,>(response: Response): Promise<T> => {
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error((data as { error?: string }).error || 'Request failed.');
+  }
+  return data as T;
+};
+
 export const DinnerProvider = ({ children }: { children: ReactNode }) => {
   const [dinners, setDinners] = useState<Dinner[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCity, setSelectedCity] = useState('all');
   const [selectedDietary, setSelectedDietary] = useState('all');
-  const { user, fetchUserReviews } = useAuth();
+  const { user } = useAuth();
   const { toast } = useToast();
   const [unreadDinnerIds, setUnreadDinnerIds] = useState<string[]>([]);
   const [readDinnerIds, setReadDinnerIds] = useState<string[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  useEffect(() => {
-    const q = query(collection(db, "dinners"), orderBy("createdAt", "desc"));
+  const fetchDinners = useCallback(async () => {
+    const data = await parseJson<{ dinners: Dinner[] }>(await fetch('/api/dinners'));
+    setDinners(data.dinners);
+  }, []);
 
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-        setLoading(true);
-        if (snapshot.empty) {
-            setDinners([]);
-            setLoading(false);
-            return;
-        }
-        
-        const dinnersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Dinner));
-
-        // Fetch creator profiles for all dinners
-        const creatorIds = [...new Set(dinnersData.map(d => d.creatorId).filter(id => id))];
-        
-        const profilesMap = new Map<string, any>();
-        const reviewsMap = new Map<string, Review[]>();
-
-        // Firestore 'in' query is limited to 30 items per query. We might need to chunk this for larger apps.
-        if (creatorIds.length > 0) {
-            // Chunk the creatorIds array into groups of 30
-            const chunks = [];
-            for (let i = 0; i < creatorIds.length; i += 30) {
-                chunks.push(creatorIds.slice(i, i + 30));
-            }
-
-            // Fetch profiles and reviews for each chunk
-            for (const chunk of chunks) {
-                if (chunk.length > 0) {
-                    const usersRef = collection(db, "users");
-                    const userQuery = query(usersRef, where('__name__', 'in', chunk));
-                    const userSnapshots = await getDocs(userQuery);
-                    userSnapshots.forEach(doc => {
-                        profilesMap.set(doc.id, doc.data());
-                    });
-                    
-                    const reviewsRef = collection(db, "reviews");
-                    const reviewsQuery = query(reviewsRef, where('revieweeId', 'in', chunk));
-                    const reviewsSnapshots = await getDocs(reviewsQuery);
-                    reviewsSnapshots.forEach(doc => {
-                        const review = doc.data() as Review;
-                        const currentReviews = reviewsMap.get(review.revieweeId) || [];
-                        reviewsMap.set(review.revieweeId, [...currentReviews, review]);
-                    });
-                }
-            }
-        }
-        
-        const hydratedDinners = dinnersData.map(dinner => {
-            const hydratedDinner = { ...dinner };
-            if (dinner.creatorId) {
-                const creatorProfile = profilesMap.get(dinner.creatorId);
-                if (creatorProfile) {
-                    hydratedDinner.creatorName = creatorProfile.name || 'Unknown Host';
-                    hydratedDinner.creatorUsername = creatorProfile.username || 'unknown';
-                    hydratedDinner.creatorImage = `https://api.dicebear.com/7.x/micah/svg?seed=${creatorProfile.avatarSeed || creatorProfile.email}`;
-                }
-
-                const hostReviews = reviewsMap.get(dinner.creatorId) || [];
-                hydratedDinner.hostReviewCount = hostReviews.length;
-                if (hostReviews.length > 0) {
-                    const totalRating = hostReviews.reduce((acc, r) => acc + r.rating, 0);
-                    hydratedDinner.hostAverageRating = totalRating / hostReviews.length;
-                } else {
-                    hydratedDinner.hostAverageRating = 0;
-                }
-            } else {
-                 hydratedDinner.creatorName = 'Unknown Host';
-                 hydratedDinner.creatorUsername = 'unknown';
-                 hydratedDinner.hostReviewCount = 0;
-                 hydratedDinner.hostAverageRating = 0;
-            }
-            return hydratedDinner;
-        });
-        
-        setDinners(hydratedDinners);
-        setLoading(false);
-    }, (error) => {
-        console.error("Error fetching dinners:", error);
-        toast({
-            title: "Error",
-            description: "Could not fetch dinners from the database.",
-            variant: "destructive"
-        })
-        setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [toast]);
-  
-  // Notification listener
-  useEffect(() => {
+  const fetchNotifications = useCallback(async () => {
     if (!user) {
-        setNotifications([]);
-        return () => {}; // Return an empty cleanup function
+      setNotifications([]);
+      return;
     }
-    
-    const notifQuery = query(
-        collection(db, 'notifications'), 
-        where('recipientId', '==', user.uid),
-        orderBy('createdAt', 'desc')
-    );
-    const unsubscribe = onSnapshot(notifQuery, (snapshot) => {
-        const notifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data()} as Notification));
-        setNotifications(notifs);
-    }, (error) => {
-        console.error("Firestore Error:", error);
-    });
-    
-    return () => unsubscribe();
 
+    const data = await parseJson<{ notifications: Notification[] }>(await fetch('/api/notifications'));
+    setNotifications(data.notifications);
   }, [user]);
 
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        setLoading(true);
+        await fetchDinners();
+      } catch (error) {
+        console.error('Error fetching dinners:', error);
+        if (active) {
+          toast({
+            title: 'Error',
+            description: 'Could not fetch dinners from the database.',
+            variant: 'destructive',
+          });
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    load();
+    const timer = window.setInterval(load, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [fetchDinners, toast]);
 
   useEffect(() => {
-    if (!user || dinners.length === 0) {
-        setUnreadDinnerIds([]);
-        return () => {}; // Return an empty cleanup function
+    fetchNotifications().catch((error) => console.error('Error fetching notifications:', error));
+    const timer = window.setInterval(() => {
+      fetchNotifications().catch((error) => console.error('Error fetching notifications:', error));
+    }, 15000);
+
+    return () => window.clearInterval(timer);
+  }, [fetchNotifications]);
+
+  useEffect(() => {
+    if (!user) {
+      setUnreadDinnerIds([]);
+      return;
     }
 
     const userDinners = dinners.filter(d => d.creatorId === user.uid || d.bookedBy?.includes(user.uid));
-    const unsubscribes: (() => void)[] = [];
-    
-    userDinners.forEach(dinner => {
-        const commentsQuery = query(collection(db, "dinners", dinner.id, "comments"));
-        const unsubscribe = onSnapshot(commentsQuery, (snapshot) => {
-            const hasUnread = snapshot.docs.some(doc => {
-                const comment = doc.data() as Comment;
-                return comment.readBy && !comment.readBy.includes(user.uid);
-            });
-            setUnreadDinnerIds(prev => {
-                const newSet = new Set(prev);
-                if(hasUnread) {
-                    newSet.add(dinner.id);
-                } else {
-                    newSet.delete(dinner.id);
-                }
-                return Array.from(newSet);
-            })
-        });
-        unsubscribes.push(unsubscribe);
-    })
 
-    return () => {
-        unsubscribes.forEach(unsub => unsub());
-    }
-  }, [user, dinners])
+    const checkMessages = async () => {
+      const unreadIds: string[] = [];
+      await Promise.all(
+        userDinners.map(async (dinner) => {
+          try {
+            const data = await parseJson<{ comments: Comment[] }>(await fetch(`/api/dinners/${dinner.id}/messages`));
+            const hasUnread = data.comments.some(comment => comment.readBy && !comment.readBy.includes(user.uid));
+            if (hasUnread) {
+              unreadIds.push(dinner.id);
+            }
+          } catch {
+            // A dinner can disappear while polling; ignore stale checks.
+          }
+        })
+      );
+      setUnreadDinnerIds(unreadIds);
+    };
+
+    checkMessages();
+    const timer = window.setInterval(checkMessages, 10000);
+    return () => window.clearInterval(timer);
+  }, [user, dinners]);
 
   const addDinner = async (dinner: Omit<Dinner, 'id'| 'filledSlots' | 'bookedBy'| 'creatorId' | 'creatorName' | 'creatorImage' | 'creatorUsername'>) => {
     if (!user) {
-        throw new Error("User not authenticated. Please sign in.");
-    }
-    if (!user.name || !user.username) {
-        toast({
-            title: "Profile Not Ready",
-            description: "Your user profile is still loading. Please wait a moment and try again.",
-            variant: "destructive"
-        })
-        throw new Error("User profile is not fully loaded.");
+      throw new Error('User not authenticated. Please sign in.');
     }
 
-    try {
-        const creatorAvatar = `https://api.dicebear.com/7.x/micah/svg?seed=${user.avatarSeed || user.email}`;
-        const docRef = await addDoc(collection(db, "dinners"), {
-            ...dinner,
-            creatorId: user.uid,
-            creatorName: user.name,
-            creatorUsername: user.username,
-            creatorImage: creatorAvatar,
-            filledSlots: 1, 
-            bookedBy: [user.uid],
-            attendees: [{ uid: user.uid, name: user.name, username: user.username, avatar: creatorAvatar }],
-            reviews: {}, // Initialize empty reviews map
-            createdAt: serverTimestamp()
-        });
-        return docRef.id;
-    } catch (error) {
-        console.error("Error adding dinner: ", error);
-        throw error;
-    }
+    const data = await parseJson<{ dinner: Dinner }>(
+      await fetch('/api/dinners', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dinner),
+      })
+    );
+    await fetchDinners();
+    return data.dinner.id;
   };
 
   const addReview = async (dinnerId: string, review: Omit<Review, 'id' | 'reviewerId' | 'reviewerName' | 'reviewerImage' | 'createdAt'>) => {
-    if (!user || !user.username) {
-        throw new Error("User not authenticated or profile incomplete.");
-    }
-    try {
-        await addDoc(collection(db, "reviews"), {
-            ...review,
-            reviewerId: user.uid,
-            reviewerName: user.username,
-            reviewerImage: `https://api.dicebear.com/7.x/micah/svg?seed=${user.avatarSeed || user.email}`,
-            createdAt: serverTimestamp(),
-        });
-        
-        const dinnerRef = doc(db, 'dinners', dinnerId);
-        const reviewMapField = `reviews.${user.uid}`;
-        
-        // Optimistically update local state first
-        setDinners(prevDinners => prevDinners.map(d => {
-            if (d.id === dinnerId) {
-                const newReviews = { ...(d.reviews || {}) };
-                if (!newReviews[user.uid]) {
-                    newReviews[user.uid] = [];
-                }
-                newReviews[user.uid].push(review.revieweeId);
-                return { ...d, reviews: newReviews };
-            }
-            return d;
-        }));
-
-        await updateDoc(dinnerRef, {
-            [reviewMapField]: arrayUnion(review.revieweeId)
-        });
-
-    } catch(error) {
-        console.error("Error adding review: ", error);
-        throw error;
-    }
+    await parseJson<{ review: Review }>(
+      await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...review, dinnerId }),
+      })
+    );
+    await fetchDinners();
   };
 
   const updateDinner = async (dinnerId: string, updatedDinner: Partial<Dinner>) => {
-    const dinnerDocRef = doc(db, "dinners", dinnerId);
-    try {
-        await updateDoc(dinnerDocRef, updatedDinner);
-    } catch(error) {
-        console.error("Error updating dinner: ", error);
-        throw error;
-    }
-  }
-
-  const deleteDinner = async (dinnerId: string) => {
-    const dinnerDocRef = doc(db, "dinners", dinnerId);
-    try {
-        await deleteDoc(dinnerDocRef);
-    } catch(error) {
-        console.error("Error deleting dinner: ", error);
-        throw error;
-    }
-  }
-
-  const bookDinner = async (dinnerId: string, userId: string) => {
-    if (!user || !user.name || !user.username) {
-        throw new Error("User profile not loaded");
-    }
-    
-    const dinnerDocRef = doc(db, "dinners", dinnerId);
-    
-    const dinnerToUpdate = dinners.find(d => d.id === dinnerId);
-    if (!dinnerToUpdate) {
-        throw new Error("Dinner not found");
-    }
-
-    if ((dinnerToUpdate.filledSlots || 0) >= dinnerToUpdate.maxGuests) {
-        toast({ title: "Dinner is full", description: "This dinner is already full.", variant: "destructive"});
-        return; 
-    }
-    
-    const userAvatar = `https://api.dicebear.com/7.x/micah/svg?seed=${user.avatarSeed || user.email}`;
-    const attendeeData = { uid: user.uid, name: user.name, username: user.username, avatar: userAvatar };
-
-    // Optimistic update of the local state
-    setDinners(prevDinners => prevDinners.map(d => 
-        d.id === dinnerId 
-        ? {
-            ...d, 
-            filledSlots: (d.filledSlots || d.bookedBy.length) + 1,
-            bookedBy: [...d.bookedBy, userId],
-            attendees: [...(d.attendees || []), attendeeData]
-          }
-        : d
-    ));
-
-    try {
-        // Update the database
-        await updateDoc(dinnerDocRef, {
-            filledSlots: (dinnerToUpdate.filledSlots || dinnerToUpdate.bookedBy.length) + 1,
-            bookedBy: arrayUnion(userId),
-            attendees: arrayUnion(attendeeData)
-        });
-
-        // Add a notification for the host
-        await addDoc(collection(db, 'notifications'), {
-            type: 'booking',
-            dinnerId: dinnerId,
-            dinnerName: dinnerToUpdate.restaurantName,
-            actorId: user.uid,
-            actorName: user.name,
-            recipientId: dinnerToUpdate.creatorId,
-            read: false,
-            createdAt: serverTimestamp(),
-        });
-        
-    } catch(error) {
-        console.error("Error booking dinner: ", error);
-         // Revert the local state if the database update fails
-         setDinners(prevDinners => prevDinners.map(d => 
-            d.id === dinnerId 
-            ? {
-                ...d, 
-                filledSlots: (d.filledSlots || d.bookedBy.length) -1,
-                bookedBy: d.bookedBy.filter(id => id !== userId),
-                attendees: (d.attendees || []).filter(a => a.uid !== userId)
-              }
-            : d
-        ));
-        throw error;
-    }
+    await parseJson<{ dinner: Dinner }>(
+      await fetch(`/api/dinners/${dinnerId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedDinner),
+      })
+    );
+    await fetchDinners();
   };
 
-  const cancelBooking = async (dinnerId: string, userId: string) => {
-     if (!user || !user.name || !user.username) {
-        throw new Error("User profile not loaded");
-    }
-    
-    const dinnerDocRef = doc(db, "dinners", dinnerId);
-    try {
-        const dinnerSnapshot = await getDoc(dinnerDocRef);
-        if (!dinnerSnapshot.exists()) {
-            throw new Error("Dinner not found");
+  const deleteDinner = async (dinnerId: string) => {
+    await parseJson<{ ok: true }>(
+      await fetch(`/api/dinners/${dinnerId}`, {
+        method: 'DELETE',
+      })
+    );
+    await fetchDinners();
+  };
+
+  const bookDinner = async (dinnerId: string) => {
+    await parseJson<{ dinner: Dinner }>(
+      await fetch(`/api/dinners/${dinnerId}/book`, {
+        method: 'POST',
+      })
+    );
+    await fetchDinners();
+    await fetchNotifications();
+  };
+
+  const cancelBooking = async (dinnerId: string) => {
+    await parseJson<{ dinner: Dinner }>(
+      await fetch(`/api/dinners/${dinnerId}/book`, {
+        method: 'DELETE',
+      })
+    );
+    await fetchDinners();
+    await fetchNotifications();
+  };
+
+  const getComments = (dinnerId: string, callback: (comments: Comment[]) => void) => {
+    let active = true;
+    const loadComments = async () => {
+      try {
+        const data = await parseJson<{ comments: Comment[] }>(await fetch(`/api/dinners/${dinnerId}/messages`));
+        if (active) {
+          callback(data.comments);
         }
-        const dinnerToUpdate = dinnerSnapshot.data() as Dinner;
+      } catch (error) {
+        console.error('Error fetching messages:', error);
+      }
+    };
 
-        const userAvatar = `https://api.dicebear.com/7.x/micah/svg?seed=${user.avatarSeed || user.email}`;
-        const attendeeData = { uid: user.uid, name: user.name, username: user.username, avatar: userAvatar };
+    loadComments();
+    const timer = window.setInterval(loadComments, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  };
 
-        await updateDoc(dinnerDocRef, {
-            filledSlots: Math.max(0, (dinnerToUpdate.filledSlots || dinnerToUpdate.bookedBy.length) - 1),
-            bookedBy: arrayRemove(userId),
-            attendees: arrayRemove(attendeeData)
-        });
-    } catch(error) {
-        console.error("Error cancelling booking: ", error);
-        throw error;
-    }
-  }
-  
+  const addComment = async (dinnerId: string, text: string) => {
+    await parseJson<{ comment: Comment }>(
+      await fetch(`/api/dinners/${dinnerId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+    );
+  };
+
+  const deleteComment = async (dinnerId: string, commentId: string) => {
+    await parseJson<{ ok: true }>(
+      await fetch(`/api/dinners/${dinnerId}/messages/${commentId}`, {
+        method: 'DELETE',
+      })
+    );
+  };
+
   const markNotificationsAsRead = async () => {
     if (!user) return;
-    const batch = writeBatch(db);
-    notifications.forEach(notif => {
-        if (!notif.read) {
-            const notifRef = doc(db, 'notifications', notif.id);
-            batch.update(notifRef, { read: true });
-        }
-    });
-    try {
-        await batch.commit();
-    } catch (error) {
-        console.error("Error marking notifications as read: ", error);
-    }
-  }
+    await parseJson<{ ok: true }>(
+      await fetch('/api/notifications', {
+        method: 'PATCH',
+      })
+    );
+    await fetchNotifications();
+  };
 
   const deleteAllNotifications = async () => {
     if (!user) return;
-    const batch = writeBatch(db);
-    const notifsToDelete = notifications.map(n => doc(db, 'notifications', n.id));
-    notifsToDelete.forEach(notifRef => batch.delete(notifRef));
     try {
-        await batch.commit();
-        toast({
-            title: "Notifications Cleared",
-            description: "All your booking notifications have been deleted."
+      await parseJson<{ ok: true }>(
+        await fetch('/api/notifications', {
+          method: 'DELETE',
         })
-    } catch(e) {
-        console.error("Error deleting all notifications:", e);
-        toast({
-            title: "Error",
-            description: "Could not delete all notifications. Please try again.",
-            variant: "destructive"
-        })
-    }
-  }
-
-
-  const getComments = (dinnerId: string, callback: (comments: Comment[]) => void) => {
-    const commentsColRef = collection(db, "dinners", dinnerId, "comments");
-    const q = query(commentsColRef, orderBy("createdAt", "asc"));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const comments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Comment));
-      callback(comments);
-    });
-
-    return unsubscribe;
-  }
-
-  const addComment = async (dinnerId: string, text: string) => {
-    if (!user) {
-        throw new Error("User not authenticated");
-    }
-    const fallbackUsername = user.email?.split('@')[0] || "anon";
-
-    const commentsColRef = collection(db, "dinners", dinnerId, "comments");
-    await addDoc(commentsColRef, {
-      text: text,
-      userId: user.uid,
-      userName: user.username || fallbackUsername,
-      userImage: `https://api.dicebear.com/7.x/micah/svg?seed=${user.avatarSeed || user.email}`,
-      createdAt: serverTimestamp(),
-      readBy: [user.uid], // User who sent it has read it
-    });
-  }
-
-  const deleteComment = async (dinnerId: string, commentId: string, isHost: boolean) => {
-    if (!user) {
-      throw new Error("User not authenticated");
-    }
-    const commentRef = doc(db, "dinners", dinnerId, "comments", commentId);
-    try {
-      const message = isHost
-        ? "[This message was deleted by the host]"
-        : "[This message was deleted]";
-      await updateDoc(commentRef, {
-        text: message,
+      );
+      await fetchNotifications();
+      toast({
+        title: 'Notifications Cleared',
+        description: 'All your booking notifications have been deleted.',
       });
-    } catch (error) {
-      console.error("Error deleting comment: ", error);
-      throw error;
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Could not delete all notifications. Please try again.',
+        variant: 'destructive',
+      });
     }
   };
 
   const markCommentsAsRead = useCallback(async (dinnerId: string, comments: Comment[]) => {
-    if (!user) return;
-    const batch = writeBatch(db);
-    let markedAsRead = false;
-    comments.forEach(comment => {
-        if (comment.readBy && !comment.readBy.includes(user.uid)) {
-            const commentRef = doc(db, "dinners", dinnerId, "comments", comment.id);
-            batch.update(commentRef, {
-                readBy: arrayUnion(user.uid)
-            });
-            markedAsRead = true;
-        }
+    if (!user || comments.length === 0) return;
+    const hasUnread = comments.some(comment => comment.readBy && !comment.readBy.includes(user.uid));
+    if (!hasUnread) return;
+
+    await parseJson<{ ok: true }>(
+      await fetch(`/api/dinners/${dinnerId}/messages/read`, {
+        method: 'PATCH',
+      })
+    );
+
+    setReadDinnerIds(prev => {
+      const newHistory = [dinnerId, ...prev.filter(id => id !== dinnerId)];
+      return newHistory.slice(0, 5);
     });
-    
-    if (markedAsRead) {
-        setReadDinnerIds(prev => {
-            const newHistory = [dinnerId, ...prev.filter(id => id !== dinnerId)];
-            return newHistory.slice(0, 5); // Keep only the last 5
-        });
-        await batch.commit();
-    }
+    setUnreadDinnerIds(prev => prev.filter(id => id !== dinnerId));
   }, [user]);
 
   const hasUnreadMessages = useCallback((dinnerId: string, comments: Comment[]) => {
-      if (!user) return false;
-      return comments.some(comment => comment.readBy && !comment.readBy.includes(user.uid));
-  }, [user]);
-
+    if (!user) return false;
+    if (unreadDinnerIds.includes(dinnerId)) return true;
+    return comments.some(comment => comment.readBy && !comment.readBy.includes(user.uid));
+  }, [user, unreadDinnerIds]);
 
   const value = { dinners, addDinner, addReview, updateDinner, deleteDinner, bookDinner, cancelBooking, getComments, addComment, deleteComment, markCommentsAsRead, hasUnreadMessages, unreadDinnerIds, readDinnerIds, notifications, markNotificationsAsRead, deleteAllNotifications, loading, selectedCity, setSelectedCity, selectedDietary, setSelectedDietary };
 

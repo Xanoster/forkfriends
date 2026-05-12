@@ -153,9 +153,11 @@ export default function NotificationBell() {
                                 <UserPlus className="h-4 w-4 text-accent mt-1" />
                                 <div>
                                     <p className="font-semibold text-sm leading-snug">
-                                        <span className="font-bold">{notif.actorName}</span> booked a slot for <span className="font-bold">{notif.dinnerName}</span>.
+                                        <span className="font-bold">{notif.actorName}</span>{' '}
+                                        {notif.type === 'cancellation' ? 'cancelled their slot for' : 'booked a slot for'}{' '}
+                                        <span className="font-bold">{notif.dinnerName}</span>.
                                     </p>
-                                    <p className="text-xs text-muted-foreground">{new Date(notif.createdAt?.toDate()).toLocaleString()}</p>
+                                    <p className="text-xs text-muted-foreground">{new Date(notif.createdAt).toLocaleString()}</p>
                                 </div>
                             </Link>
                         </DropdownMenuItem>
