@@ -27,7 +27,9 @@ import {
   Ban,
   MessageCircle,
   Send,
+  Bell,
   Star,
+  CheckCircle,
   ArrowLeft,
   Trash2,
 } from 'lucide-react';
