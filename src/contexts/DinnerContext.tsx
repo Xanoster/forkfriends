@@ -1,9 +1,10 @@
 'use client';
 
-import React, { createContext, useState, useContext, ReactNode, useEffect, Dispatch, SetStateAction, useCallback } from 'react';
+import React, { createContext, useState, useContext, ReactNode, useEffect, Dispatch, SetStateAction, useCallback, useRef } from 'react';
 import { Dinner, Comment, Review, Notification } from '@/lib/data';
 import { useAuth } from './AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { useVisibleInterval } from '@/hooks/use-visible-interval';
 
 interface DinnerContextType {
   dinners: Dinner[];
@@ -89,52 +90,60 @@ export const DinnerProvider = ({ children }: { children: ReactNode }) => {
     };
 
     load();
-    const timer = window.setInterval(load, 15000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
+    return () => { active = false; };
   }, [fetchDinners, toast]);
+
+  // Poll dinners every 30s, pausing when tab is hidden
+  useVisibleInterval(() => {
+    fetchDinners().catch((error) => console.error('Error fetching dinners:', error));
+  }, 30000);
+
+  // Poll notifications every 30s, pausing when tab is hidden
+  useVisibleInterval(() => {
+    fetchNotifications().catch((error) => console.error('Error fetching notifications:', error));
+  }, 30000);
 
   useEffect(() => {
     fetchNotifications().catch((error) => console.error('Error fetching notifications:', error));
-    const timer = window.setInterval(() => {
-      fetchNotifications().catch((error) => console.error('Error fetching notifications:', error));
-    }, 15000);
-
-    return () => window.clearInterval(timer);
   }, [fetchNotifications]);
+
+  const userDinnersRef = useRef<Dinner[]>([]);
 
   useEffect(() => {
     if (!user) {
       setUnreadDinnerIds([]);
+      userDinnersRef.current = [];
       return;
     }
-
-    const userDinners = dinners.filter(d => d.creatorId === user.uid || d.bookedBy?.includes(user.uid));
-
-    const checkMessages = async () => {
-      const unreadIds: string[] = [];
-      await Promise.all(
-        userDinners.map(async (dinner) => {
-          try {
-            const data = await parseJson<{ comments: Comment[] }>(await fetch(`/api/dinners/${dinner.id}/messages`));
-            const hasUnread = data.comments.some(comment => comment.readBy && !comment.readBy.includes(user.uid));
-            if (hasUnread) {
-              unreadIds.push(dinner.id);
-            }
-          } catch {
-            // A dinner can disappear while polling; ignore stale checks.
-          }
-        })
-      );
-      setUnreadDinnerIds(unreadIds);
-    };
-
-    checkMessages();
-    const timer = window.setInterval(checkMessages, 10000);
-    return () => window.clearInterval(timer);
+    userDinnersRef.current = dinners.filter(d => d.creatorId === user.uid || d.bookedBy?.includes(user.uid));
   }, [user, dinners]);
+
+  const checkMessages = useCallback(async () => {
+    if (!user || userDinnersRef.current.length === 0) return;
+
+    const unreadIds: string[] = [];
+    await Promise.all(
+      userDinnersRef.current.map(async (dinner) => {
+        try {
+          const data = await parseJson<{ comments: Comment[] }>(await fetch(`/api/dinners/${dinner.id}/messages`));
+          const hasUnread = data.comments.some(comment => comment.readBy && !comment.readBy.includes(user.uid));
+          if (hasUnread) {
+            unreadIds.push(dinner.id);
+          }
+        } catch {
+          // A dinner can disappear while polling; ignore stale checks.
+        }
+      })
+    );
+    setUnreadDinnerIds(unreadIds);
+  }, [user]);
+
+  useEffect(() => {
+    checkMessages();
+  }, [checkMessages]);
+
+  // Check unread messages every 30s, pausing when tab is hidden
+  useVisibleInterval(checkMessages, 30000);
 
   const addDinner = async (dinner: Omit<Dinner, 'id'| 'filledSlots' | 'bookedBy'| 'creatorId' | 'creatorName' | 'creatorImage' | 'creatorUsername'>) => {
     if (!user) {
