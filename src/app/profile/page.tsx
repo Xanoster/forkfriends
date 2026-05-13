@@ -122,10 +122,10 @@ export default function ProfilePage() {
                 title: "Profile Updated",
                 description: "Your changes have been saved successfully.",
             });
-        } catch (error) {
+        } catch (error: any) {
              toast({
                 title: "Update Failed",
-                description: "Could not save your profile changes.",
+                description: error?.message || "Could not save your profile changes.",
                 variant: 'destructive',
             });
         } finally {
