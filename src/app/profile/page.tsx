@@ -15,18 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cities, dietaryOptions, Review, Dinner } from '@/lib/data';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Shuffle, Star, Trash, Eye } from 'lucide-react';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
+import { Shuffle, Star, Eye } from 'lucide-react';
 import { useDinner } from '@/contexts/DinnerContext';
 import Link from 'next/link';
 
@@ -53,7 +42,7 @@ const StarRating = ({ rating, totalReviews }: { rating: number, totalReviews: nu
 }
 
 export default function ProfilePage() {
-  const { user: authUser, loading: authLoading, updateUser, fetchUserProfile, fetchUserReviews, deleteAccount } = useAuth();
+  const { user: authUser, loading: authLoading, updateUser, fetchUserProfile, fetchUserReviews } = useAuth();
   const { dinners, loading: dinnersLoading } = useDinner();
   const router = useRouter();
   const { toast } = useToast();
@@ -133,23 +122,6 @@ export default function ProfilePage() {
         }
     }
   };
-
-  const handleDeleteAccount = async () => {
-    try {
-        await deleteAccount();
-        toast({
-            title: "Account Deleted",
-            description: "Your account has been permanently deleted."
-        });
-        router.push('/');
-    } catch (error: any) {
-        toast({
-            title: "Deletion Failed",
-            description: error.message || "Could not delete your account. Please try again.",
-            variant: "destructive"
-        })
-    }
-  }
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -238,40 +210,6 @@ export default function ProfilePage() {
             </CardFooter>
         </Card>
         
-        <Card className="border-destructive">
-            <CardHeader>
-                <CardTitle className="text-destructive font-headline">Danger Zone</CardTitle>
-                <CardDescription>
-                    This action is permanent and cannot be undone. Please proceed with caution.
-                </CardDescription>
-            </CardHeader>
-            <CardContent>
-                 <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                        <Button variant="destructive">
-                            <Trash className="mr-2 h-4 w-4" />
-                            Delete My Account
-                        </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                        <AlertDialogHeader>
-                            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                                This action cannot be undone. This will permanently delete your account,
-                                remove your profile data, and log you out.
-                            </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={handleDeleteAccount} className="bg-destructive hover:bg-destructive/90">
-                                Yes, delete my account
-                            </AlertDialogAction>
-                        </AlertDialogFooter>
-                    </AlertDialogContent>
-                </AlertDialog>
-            </CardContent>
-        </Card>
-
       </div>
     </div>
   );

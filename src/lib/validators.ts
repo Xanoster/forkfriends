@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const profileSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
-  username: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9_]+$/).optional(),
+  username: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9_.]+$/).optional(),
   age: z.coerce.number().int().min(13).max(120).nullable().optional(),
   city: z.string().trim().max(80).nullable().optional(),
   dietary: z.string().trim().max(40).nullable().optional(),
