@@ -5,16 +5,31 @@ import { dateAndTimeToStartsAt } from "@/lib/time";
 import { dinnerInclude, serializeDinner } from "@/lib/serializers";
 import { dinnerSchema } from "@/lib/validators";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const limitParam = searchParams.get("limit");
+    const cursor = searchParams.get("cursor");
+
+    const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 50, 1), 100) : 50;
+
     const dinners = await prisma.dinner.findMany({
       include: dinnerInclude,
       orderBy: {
         createdAt: "desc",
       },
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
 
-    return NextResponse.json({ dinners: dinners.map(serializeDinner) });
+    const hasMore = dinners.length > limit;
+    const results = hasMore ? dinners.slice(0, limit) : dinners;
+    const nextCursor = hasMore ? results[results.length - 1].id : null;
+
+    return NextResponse.json({
+      dinners: results.map(serializeDinner),
+      nextCursor,
+    });
   } catch (error) {
     return jsonError(error);
   }
