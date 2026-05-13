@@ -1,9 +1,6 @@
 import { PrismaClient } from "@prisma/client";
-import { hash } from "bcryptjs";
 
 const prisma = new PrismaClient();
-
-const demoPassword = "password123";
 
 const users = [
   {
@@ -40,8 +37,6 @@ const nextDinnerDate = (daysFromNow: number, hour: number) => {
 };
 
 async function main() {
-  const passwordHash = await hash(demoPassword, 12);
-
   const [maya, jonas, lea] = await Promise.all(
     users.map((user) =>
       prisma.user.upsert({
@@ -49,7 +44,7 @@ async function main() {
         update: user,
         create: {
           ...user,
-          passwordHash,
+          passwordHash: "__clerk_seed__",
           avatarSeed: user.email,
         },
       })

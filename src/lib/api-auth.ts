@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { auth, clerkClient } from "@clerk/nextjs/server";
+import { ZodError } from "zod";
 import { prisma } from "@/lib/prisma";
 import { userSelect } from "@/lib/serializers";
+import { uniqueUsernameFromEmail } from "@/lib/validators";
 
 export class ApiError extends Error {
   status: number;
@@ -17,25 +19,67 @@ export const jsonError = (error: unknown) => {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
 
+  if (error instanceof ZodError) {
+    return NextResponse.json(
+      { error: error.errors[0]?.message || "Please check your input and try again." },
+      { status: 400 }
+    );
+  }
+
   console.error(error);
   return NextResponse.json({ error: "Unexpected server error." }, { status: 500 });
 };
 
-export const requireCurrentUser = async () => {
-  const session = await auth();
-  const userId = session?.user?.id;
+const makeUniqueUsername = async (email: string) => {
+  const base = uniqueUsernameFromEmail(email);
+  let candidate = base;
+  let suffix = 1;
 
-  if (!userId) {
+  while (await prisma.user.findUnique({ where: { username: candidate }, select: { id: true } })) {
+    candidate = `${base}${suffix}`;
+    suffix += 1;
+  }
+
+  return candidate;
+};
+
+export const requireCurrentUser = async () => {
+  const { userId: clerkUserId } = await auth();
+
+  if (!clerkUserId) {
     throw new ApiError("You must be signed in.", 401);
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
+  const client = await clerkClient();
+  const clerkUser = await client.users.getUser(clerkUserId);
+  const primaryEmail = clerkUser.emailAddresses.find(
+    (emailAddress) => emailAddress.id === clerkUser.primaryEmailAddressId
+  )?.emailAddress;
+
+  if (!primaryEmail) {
+    throw new ApiError("Your Clerk account is missing a primary email.", 400);
+  }
+
+  const normalizedEmail = primaryEmail.toLowerCase();
+
+  let user = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
     select: userSelect,
   });
 
   if (!user) {
-    throw new ApiError("Your account could not be found.", 401);
+    user = await prisma.user.create({
+      data: {
+        email: normalizedEmail,
+        name:
+          [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
+          normalizedEmail.split("@")[0],
+        username: await makeUniqueUsername(normalizedEmail),
+        avatarSeed: normalizedEmail,
+        passwordHash: "__clerk_managed__",
+      },
+      select: userSelect,
+    });
   }
 
   return user;

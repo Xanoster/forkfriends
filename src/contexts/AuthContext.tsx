@@ -2,8 +2,7 @@
 
 import React, { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { SessionProvider, signIn, signOut, useSession } from 'next-auth/react';
-import { useToast } from '@/hooks/use-toast';
+import { useAuth as useClerkAuth, useClerk } from '@clerk/nextjs';
 import { Review } from '@/lib/data';
 
 export interface User {
@@ -33,6 +32,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const authPages = new Set(['/signin', '/signup']);
+
 const parseJson = async <T,>(response: Response): Promise<T> => {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -42,16 +43,21 @@ const parseJson = async <T,>(response: Response): Promise<T> => {
 };
 
 const AuthStateProvider = ({ children }: { children: ReactNode }) => {
-  const { status } = useSession();
+  const { isLoaded, userId } = useClerkAuth();
+  const { signOut } = useClerk();
   const [user, setUser] = useState<User | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const router = useRouter();
-  const { toast } = useToast();
 
   const refreshCurrentUser = useCallback(async () => {
-    if (status !== 'authenticated') {
+    if (!isLoaded) {
+      setProfileLoading(true);
+      return null;
+    }
+
+    if (!userId) {
       setUser(null);
-      setProfileLoading(status === 'loading');
+      setProfileLoading(false);
       return null;
     }
 
@@ -67,52 +73,23 @@ const AuthStateProvider = ({ children }: { children: ReactNode }) => {
     } finally {
       setProfileLoading(false);
     }
-  }, [status]);
+  }, [isLoaded, userId]);
 
   useEffect(() => {
     refreshCurrentUser();
   }, [refreshCurrentUser]);
 
-  const login = async (email: string, pass: string) => {
-    const result = await signIn('credentials', {
-      email,
-      password: pass,
-      redirect: false,
-    });
-
-    if (result?.error) {
-      toast({
-        title: 'Sign In Failed',
-        description: 'Incorrect email or password. Please try again.',
-        variant: 'destructive',
-      });
-      throw new Error(result.error);
-    }
-
-    await refreshCurrentUser();
-    if (window.location.pathname.startsWith('/signin')) {
-      router.push('/');
-      router.refresh();
-    }
+  const login = async (_email: string, _pass: string) => {
+    router.push('/signin');
   };
 
-  const signup = async (name: string, email: string, pass: string) => {
-    await parseJson<{ user: User }>(
-      await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password: pass }),
-      })
-    );
-
-    await login(email, pass);
+  const signup = async (_name: string, _email: string, _pass: string) => {
+    router.push('/signup');
   };
 
   const logout = async () => {
-    await signOut({ redirect: false });
+    await signOut({ redirectUrl: '/signin' });
     setUser(null);
-    router.push('/signin');
-    router.refresh();
   };
 
   const updateUser = async (updatedFields: Partial<User>) => {
@@ -158,9 +135,16 @@ const AuthStateProvider = ({ children }: { children: ReactNode }) => {
         method: 'DELETE',
       })
     );
-    await signOut({ redirect: false });
+    await signOut({ redirectUrl: '/signin' });
     setUser(null);
   };
+
+  useEffect(() => {
+    if (user && authPages.has(window.location.pathname)) {
+      router.push('/');
+      router.refresh();
+    }
+  }, [user, router]);
 
   const value = {
     user,
@@ -172,16 +156,14 @@ const AuthStateProvider = ({ children }: { children: ReactNode }) => {
     fetchPublicProfile,
     fetchUserReviews,
     deleteAccount,
-    loading: status === 'loading' || profileLoading,
+    loading: !isLoaded || profileLoading,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => (
-  <SessionProvider>
-    <AuthStateProvider>{children}</AuthStateProvider>
-  </SessionProvider>
+  <AuthStateProvider>{children}</AuthStateProvider>
 );
 
 export const useAuth = () => {
