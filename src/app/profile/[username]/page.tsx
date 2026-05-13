@@ -9,7 +9,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { useState, useEffect, useMemo } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Home, Star, Utensils, Crown, ArrowLeft, Users, Zap, Briefcase } from 'lucide-react';
+import { Home, Star, Utensils, ArrowLeft, Users, Zap, Briefcase } from 'lucide-react';
 import { Review, Dinner } from '@/lib/data';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -189,12 +189,6 @@ export default function PublicProfilePage() {
                                                 <Button variant="link" asChild className="p-0 h-auto font-bold">
                                                     <Link href={`/profile/${review.reviewerName}`}>@{review.reviewerName}</Link>
                                                 </Button>
-                                                {review.isHostReview && (
-                                                    <Badge variant="secondary" className="gap-1">
-                                                        <Crown className="h-3 w-3" />
-                                                        Host
-                                                    </Badge>
-                                                )}
                                             </div>
                                             <div className="flex items-center">
                                                 {[...Array(5)].map((_, i) => (
