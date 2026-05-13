@@ -1,0 +1,44 @@
+{
+  "users": [
+    {
+      "email": "user@example.com",
+      "name": "Your Name",
+      "username": "yourname",
+      "city": "Berlin",
+      "dietary": "Veg",
+      "bio": "Tell us about yourself."
+    }
+  ],
+  "dinners": [
+    {
+      "id": "seed-example-dinner",
+      "creator": "yourname",
+      "restaurantName": "Example Restaurant",
+      "address": "Example Str. 1",
+      "city": "Berlin",
+      "cuisine": "Italian",
+      "dietary": "Veg",
+      "budget": "$$",
+      "maxGuests": 4,
+      "startsAt": "2026-06-01T19:00:00.000Z",
+      "attendees": ["yourname"],
+      "messages": [
+        {
+          "from": "yourname",
+          "text": "Looking forward to it!",
+          "readBy": ["yourname"]
+        }
+      ]
+    }
+  ],
+  "notifications": [
+    {
+      "id": "seed-example-notification",
+      "type": "booking",
+      "dinner": "seed-example-dinner",
+      "actor": "yourname",
+      "recipient": "yourname"
+    }
+  ],
+  "reviews": []
+}

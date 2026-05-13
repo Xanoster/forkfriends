@@ -41,3 +41,6 @@ next-env.d.ts
 .genkit/*
 .env*
 !.env.example
+
+# Local seed data (contains dev emails/usernames — copy from seed-data.example.json)
+prisma/seed-data.json

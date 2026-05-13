@@ -1,128 +1,193 @@
-import { PrismaClient } from "@prisma/client";
+﻿import { PrismaClient } from "@prisma/client";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 const prisma = new PrismaClient();
 
-const users = [
-  {
-    email: "diner@example.com",
-    name: "Maya Singh",
-    username: "maya",
-    city: "Berlin",
-    dietary: "Veg",
-    bio: "Always looking for cozy spots, thoughtful conversation, and excellent dessert.",
-  },
-  {
-    email: "host@example.com",
-    name: "Jonas Weber",
-    username: "jonas",
-    city: "Munich",
-    dietary: "Non-Veg",
-    bio: "Weekend host, pasta enthusiast, and strong believer in sharing the good table.",
-  },
-  {
-    email: "vegan@example.com",
-    name: "Lea Fischer",
-    username: "lea",
-    city: "Hamburg",
-    dietary: "Vegan",
-    bio: "Plant-based food explorer. I keep a running map of great dumplings.",
-  },
-];
+interface SeedMessage {
+  from: string;
+  text: string;
+  readBy: string[];
+}
 
-const nextDinnerDate = (daysFromNow: number, hour: number) => {
+interface SeedDinner {
+  id: string;
+  creator: string;
+  restaurantName: string;
+  address: string;
+  city: string;
+  cuisine: string;
+  dietary: string;
+  budget: string;
+  maxGuests: number;
+  /** ISO date string for a fixed date */
+  startsAt?: string;
+  /** Relative date: days from now */
+  daysFromNow?: number;
+  /** Hour (UTC) to use with daysFromNow */
+  hour?: number;
+  attendees: string[];
+  messages?: SeedMessage[];
+}
+
+interface SeedNotification {
+  id: string;
+  type: string;
+  dinner: string;
+  actor: string;
+  recipient: string;
+}
+
+interface SeedReview {
+  id: string;
+  dinner: string;
+  reviewer: string;
+  reviewee: string;
+  rating: number;
+  comment: string;
+  isHostReview?: boolean;
+}
+
+interface SeedData {
+  users: {
+    email: string;
+    name: string;
+    username: string;
+    city: string;
+    dietary: string;
+    bio: string;
+  }[];
+  dinners: SeedDinner[];
+  notifications: SeedNotification[];
+  reviews?: SeedReview[];
+}
+
+function resolveStartsAt(dinner: SeedDinner): Date {
+  if (dinner.startsAt) {
+    return new Date(dinner.startsAt);
+  }
   const date = new Date();
-  date.setUTCDate(date.getUTCDate() + daysFromNow);
-  date.setUTCHours(hour, 0, 0, 0);
+  date.setUTCDate(date.getUTCDate() + (dinner.daysFromNow ?? 0));
+  date.setUTCHours(dinner.hour ?? 19, 0, 0, 0);
   return date;
-};
+}
 
 async function main() {
-  const [maya, jonas, lea] = await Promise.all(
-    users.map((user) =>
-      prisma.user.upsert({
-        where: { email: user.email },
-        update: user,
-        create: {
-          ...user,
-          passwordHash: "__clerk_seed__",
-          avatarSeed: user.email,
+  const dataPath = join(__dirname, "seed-data.json");
+  const raw = readFileSync(dataPath, "utf-8").replace(/^\uFEFF/, "");
+  const { users, dinners, notifications, reviews = [] }: SeedData = JSON.parse(raw);
+  const dinnersById = new Map(dinners.map((dinner) => [dinner.id, dinner]));
+
+  // Wipe all seed-generated data so re-running gives a clean slate
+  await prisma.review.deleteMany({});
+  await prisma.notification.deleteMany({});
+  await prisma.message.deleteMany({});
+  await prisma.dinnerAttendee.deleteMany({});
+  await prisma.dinner.deleteMany({});
+  await prisma.user.deleteMany({});
+
+  // Upsert users and build a username -> { id, name } map
+  const userMap: Record<string, { id: string; name: string }> = {};
+  for (const user of users) {
+    const record = await prisma.user.upsert({
+      where: { email: user.email },
+      update: user,
+      create: {
+        ...user,
+        passwordHash: "__clerk_seed__",
+        avatarSeed: user.email,
+      },
+    });
+    userMap[user.username] = { id: record.id, name: record.name };
+  }
+
+  // Upsert dinners
+  const dinnerIdMap: Record<string, string> = {};
+  for (const d of dinners) {
+    const creatorId = userMap[d.creator].id;
+    const record = await prisma.dinner.upsert({
+      where: { id: d.id },
+      update: {},
+      create: {
+        id: d.id,
+        creatorId,
+        restaurantName: d.restaurantName,
+        address: d.address,
+        city: d.city,
+        cuisine: d.cuisine,
+        dietary: d.dietary,
+        budget: d.budget,
+        maxGuests: d.maxGuests,
+        startsAt: resolveStartsAt(d),
+        attendees: {
+          create: d.attendees.map((username) => ({
+            userId: userMap[username].id,
+          })),
         },
-      })
-    )
-  );
-
-  const dinner = await prisma.dinner.upsert({
-    where: { id: "seed-berlin-noodles" },
-    update: {},
-    create: {
-      id: "seed-berlin-noodles",
-      creatorId: jonas.id,
-      restaurantName: "Noodle House Mitte",
-      address: "Rosenthaler Str. 12",
-      city: "Berlin",
-      cuisine: "Thai",
-      dietary: "Veg",
-      budget: "$$",
-      maxGuests: 4,
-      startsAt: nextDinnerDate(5, 18),
-      attendees: {
-        create: [
-          { userId: jonas.id },
-          { userId: maya.id },
-        ],
+        ...(d.messages?.length
+          ? {
+              messages: {
+                create: d.messages.map((m) => ({
+                  userId: userMap[m.from].id,
+                  text: m.text,
+                  readByIds: m.readBy.map((u) => userMap[u].id),
+                })),
+              },
+            }
+          : {}),
       },
-      messages: {
-        create: [
-          {
-            userId: jonas.id,
-            text: "I booked a table near the window. Looking forward to it!",
-            readByIds: [jonas.id, maya.id],
-          },
-          {
-            userId: maya.id,
-            text: "Perfect, I will bring my appetite.",
-            readByIds: [maya.id],
-          },
-        ],
-      },
-    },
-  });
+    });
+    dinnerIdMap[d.id] = record.id;
+  }
 
-  await prisma.notification.upsert({
-    where: {
-      id: "seed-notification-booking",
-    },
-    update: {},
-    create: {
-      id: "seed-notification-booking",
-      type: "booking",
-      dinnerId: dinner.id,
-      dinnerName: dinner.restaurantName,
-      actorId: maya.id,
-      actorName: maya.name,
-      recipientId: jonas.id,
-    },
-  });
-
-  await prisma.dinner.upsert({
-    where: { id: "seed-hamburg-vegan" },
-    update: {},
-    create: {
-      id: "seed-hamburg-vegan",
-      creatorId: lea.id,
-      restaurantName: "Green Spoon",
-      address: "Marktstrasse 24",
-      city: "Hamburg",
-      cuisine: "Vegan Bowls",
-      dietary: "Vegan",
-      budget: "$$",
-      maxGuests: 5,
-      startsAt: nextDinnerDate(9, 19),
-      attendees: {
-        create: [{ userId: lea.id }],
+  // Upsert notifications
+  for (const n of notifications) {
+    const actor = userMap[n.actor];
+    await prisma.notification.upsert({
+      where: { id: n.id },
+      update: {},
+      create: {
+        id: n.id,
+        type: n.type,
+        dinnerId: dinnerIdMap[n.dinner],
+        dinnerName: dinners.find((d) => d.id === n.dinner)!.restaurantName,
+        actorId: actor.id,
+        actorName: actor.name,
+        recipientId: userMap[n.recipient].id,
       },
-    },
-  });
+    });
+  }
+
+  // Upsert reviews
+  for (const review of reviews) {
+    const dinner = dinnersById.get(review.dinner);
+    if (!dinner) {
+      throw new Error(`Review references unknown dinner: ${review.dinner}`);
+    }
+
+    await prisma.review.upsert({
+      where: { id: review.id },
+      update: {
+        rating: review.rating,
+        comment: review.comment,
+        revieweeId: userMap[review.reviewee].id,
+        reviewerId: userMap[review.reviewer].id,
+        dinnerId: dinnerIdMap[review.dinner],
+        dinnerName: dinner.restaurantName,
+        isHostReview: review.isHostReview ?? dinner.creator === review.reviewee,
+      },
+      create: {
+        id: review.id,
+        rating: review.rating,
+        comment: review.comment,
+        revieweeId: userMap[review.reviewee].id,
+        reviewerId: userMap[review.reviewer].id,
+        dinnerId: dinnerIdMap[review.dinner],
+        dinnerName: dinner.restaurantName,
+        isHostReview: review.isHostReview ?? dinner.creator === review.reviewee,
+      },
+    });
+  }
 }
 
 main()
