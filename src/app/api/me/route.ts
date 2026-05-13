@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { ApiError, jsonError, requireCurrentUser } from "@/lib/api-auth";
 import { serializeUser, userSelect } from "@/lib/serializers";
@@ -41,9 +42,17 @@ export async function PATCH(request: Request) {
 export async function DELETE() {
   try {
     const user = await requireCurrentUser();
+    const { userId: clerkUserId } = await auth();
+
     await prisma.user.delete({
       where: { id: user.id },
     });
+
+    // Also delete the Clerk account so the user isn't re-created on next auth check
+    if (clerkUserId) {
+      const client = await clerkClient();
+      await client.users.deleteUser(clerkUserId);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {
