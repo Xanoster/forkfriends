@@ -2,15 +2,15 @@
 
 import * as React from 'react';
 import { useAuth, User } from '@/contexts/AuthContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { useRouter, useParams } from 'next/navigation';
 import { useState, useEffect, useMemo } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Home, Star, Utensils, ArrowLeft, Users, Zap, Briefcase } from 'lucide-react';
-import { Review, Dinner } from '@/lib/data';
+import { Star, Utensils, ArrowLeft, Users, Zap, Briefcase } from 'lucide-react';
+import { Review } from '@/lib/data';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useDinner } from '@/contexts/DinnerContext';

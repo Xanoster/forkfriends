@@ -11,7 +11,6 @@ import { useDinner } from '@/contexts/DinnerContext';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ArrowLeft, Briefcase, Zap, Users, Eye } from 'lucide-react';
 import Link from 'next/link';
-import { useToast } from '@/hooks/use-toast';
 
 const StatItem = ({ icon, label, value }: { icon: React.ElementType; label: string; value: number | string }) => (
     <div className="flex flex-col items-center justify-center p-6 bg-muted/50 rounded-lg text-center">
@@ -27,7 +26,6 @@ export default function MyActivityPage() {
     const { user: authUser, loading: authLoading } = useAuth();
     const { dinners, loading: dinnersLoading } = useDinner();
     const router = useRouter();
-    const { toast } = useToast();
     const [pageLoading, setPageLoading] = useState(true);
 
 

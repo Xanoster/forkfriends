@@ -11,7 +11,6 @@ import { ArrowLeft, Star, Utensils } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { Badge } from '@/components/ui/badge';
 
 export default function MyReviewsPage() {
   const { user: authUser, loading: authLoading, fetchUserReviews } = useAuth();
@@ -107,8 +106,7 @@ export default function MyReviewsPage() {
                                                             <Button variant="link" asChild className='p-0 h-auto font-bold'>
                                                                 <Link href={`/profile/${review.reviewerName}`}>@{review.reviewerName}</Link>
                                                             </Button>
-                                                            {review.isHostReview && <Badge variant="outline">Host</Badge>}
-                                                         </div>
+                                                            </div>
                                                         <div className="flex items-center">
                                                             {[...Array(5)].map((_, i) => (
                                                                 <Star key={i} className={`h-4 w-4 ${i < review.rating ? 'text-primary fill-primary' : 'text-muted-foreground/30'}`} />

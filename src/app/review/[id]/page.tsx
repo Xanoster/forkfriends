@@ -19,7 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Star, CheckCircle, Users, Crown, ArrowLeft } from 'lucide-react';
+import { Star, CheckCircle, Users, ArrowLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter, useParams } from 'next/navigation';
 import { useEffect, useMemo, useState, Suspense } from 'react';
